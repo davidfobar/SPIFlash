@@ -53,19 +53,19 @@
 /// Assuming the WP pin is pulled up (to disable hardware write protection)
 /// To use any write commands the WEL bit in the status register must be set to 1.
 /// This is accomplished by sending a 0x06 command before any such write/erase command.
-/// The WEL bit in the status register resets to the logical “0” state after a
-/// device power-up or reset. In addition, the WEL bit will be reset to the logical “0” state automatically under the following conditions:
-/// • Write Disable operation completes successfully
-/// • Write Status Register operation completes successfully or aborts
-/// • Protect Sector operation completes successfully or aborts
-/// • Unprotect Sector operation completes successfully or aborts
-/// • Byte/Page Program operation completes successfully or aborts
-/// • Sequential Program Mode reaches highest unprotected memory location
-/// • Sequential Program Mode reaches the end of the memory array
-/// • Sequential Program Mode aborts
-/// • Block Erase operation completes successfully or aborts
-/// • Chip Erase operation completes successfully or aborts
-/// • Hold condition aborts
+/// The WEL bit in the status register resets to the logical ï¿½0ï¿½ state after a
+/// device power-up or reset. In addition, the WEL bit will be reset to the logical ï¿½0ï¿½ state automatically under the following conditions:
+/// ï¿½ Write Disable operation completes successfully
+/// ï¿½ Write Status Register operation completes successfully or aborts
+/// ï¿½ Protect Sector operation completes successfully or aborts
+/// ï¿½ Unprotect Sector operation completes successfully or aborts
+/// ï¿½ Byte/Page Program operation completes successfully or aborts
+/// ï¿½ Sequential Program Mode reaches highest unprotected memory location
+/// ï¿½ Sequential Program Mode reaches the end of the memory array
+/// ï¿½ Sequential Program Mode aborts
+/// ï¿½ Block Erase operation completes successfully or aborts
+/// ï¿½ Chip Erase operation completes successfully or aborts
+/// ï¿½ Hold condition aborts
 #define SPIFLASH_WRITEENABLE      0x06        // write enable
 #define SPIFLASH_WRITEDISABLE     0x04        // write disable
 
@@ -90,7 +90,7 @@
 class SPIFlash {
 public:
   static uint8_t UNIQUEID[8];
-  SPIFlash(uint8_t slaveSelectPin, uint16_t jedecID=0);
+  SPIFlash(uint8_t slaveSelectPin, SPIClass *_spi, SPISettings settings, uint16_t jedecID=0);
   boolean initialize();
   void command(uint8_t cmd, boolean isWrite=false);
   uint8_t readStatus();
@@ -116,6 +116,7 @@ protected:
   void unselect();
   uint8_t _slaveSelectPin;
   uint16_t _jedecID;
+  SPIClass *_spi;
   uint8_t _SPCR;
   uint8_t _SPSR;
 #ifdef SPI_HAS_TRANSACTION

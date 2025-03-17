@@ -50,67 +50,37 @@ uint8_t SPIFlash::UNIQUEID[8];
 /// get this from the datasheet of your flash chip
 /// Example for Atmel-Adesto 4Mbit AT25DF041A: 0x1F44 (page 27: http://www.adestotech.com/sites/default/files/datasheets/doc3668.pdf)
 /// Example for Winbond 4Mbit W25X40CL: 0xEF30 (page 14: http://www.winbond.com/NR/rdonlyres/6E25084C-0BFE-4B25-903D-AE10221A0929/0/W25X40CL.pdf)
-SPIFlash::SPIFlash(uint8_t slaveSelectPin, uint16_t jedecID) {
+SPIFlash::SPIFlash(uint8_t slaveSelectPin, SPIClass *spi, SPISettings settings, uint16_t jedecID) {
   _slaveSelectPin = slaveSelectPin;
   _jedecID = jedecID;
+  _spi = spi;
+  _settings = settings;
 }
 
 /// Select the flash chip
 void SPIFlash::select() {
-  //save current SPI settings
-#ifndef SPI_HAS_TRANSACTION
-  noInterrupts();
-#endif
-#if defined (SPCR) && defined (SPSR)
-  _SPCR = SPCR;
-  _SPSR = SPSR;
-#endif
-
-#ifdef SPI_HAS_TRANSACTION
-  SPI.beginTransaction(_settings);
-#else
-  // set FLASH SPI settings
-  SPI.setDataMode(SPI_MODE0);
-  SPI.setBitOrder(MSBFIRST);
-  SPI.setClockDivider(SPI_CLOCK_DIV4); //decided to slow down from DIV2 after SPI stalling in some instances, especially visible on mega1284p when RFM69 and FLASH chip both present
-#endif
+  _spi->beginTransaction(_settings);
   digitalWrite(_slaveSelectPin, LOW);
 }
 
 /// UNselect the flash chip
 void SPIFlash::unselect() {
   digitalWrite(_slaveSelectPin, HIGH);
-  //restore SPI settings to what they were before talking to the FLASH chip
-#ifdef SPI_HAS_TRANSACTION
-  SPI.endTransaction();
-#else  
-  interrupts();
-#endif
-#if defined (SPCR) && defined (SPSR)
-  SPCR = _SPCR;
-  SPSR = _SPSR;
-#endif
+_spi->endTransaction();
 }
 
 /// setup SPI, read device ID etc...
-boolean SPIFlash::initialize()
-{
-#if defined (SPCR) && defined (SPSR)
-  _SPCR = SPCR;
-  _SPSR = SPSR;
-#endif
+boolean SPIFlash::initialize() {
+
   pinMode(_slaveSelectPin, OUTPUT);
-  SPI.begin();
-#ifdef SPI_HAS_TRANSACTION
-  _settings = SPISettings(4000000, MSBFIRST, SPI_MODE0);
-#endif
+  _spi->begin();
 
   unselect();
   wakeup();
   
   if (_jedecID == 0 || readDeviceId() == _jedecID) {
     command(SPIFLASH_STATUSWRITE, true); // Write Status Register
-    SPI.transfer(0);                     // Global Unprotect
+    _spi->transfer(0);                     // Global Unprotect
     unselect();
     return true;
   }
@@ -118,16 +88,11 @@ boolean SPIFlash::initialize()
 }
 
 /// Get the manufacturer and device ID bytes (as a short word)
-uint16_t SPIFlash::readDeviceId()
-{
-#if defined(__AVR_ATmega32U4__) // Arduino Leonardo, MoteinoLeo
-  command(SPIFLASH_IDREAD); // Read JEDEC ID
-#else
+uint16_t SPIFlash::readDeviceId() {
   select();
-  SPI.transfer(SPIFLASH_IDREAD);
-#endif
-  uint16_t jedecid = SPI.transfer(0) << 8;
-  jedecid |= SPI.transfer(0);
+  _spi->transfer(SPIFLASH_IDREAD);
+  uint16_t jedecid = _spi->transfer(0) << 8;
+  jedecid |= _spi->transfer(0);
   unselect();
   return jedecid;
 }
@@ -141,12 +106,12 @@ uint16_t SPIFlash::readDeviceId()
 uint8_t* SPIFlash::readUniqueId()
 {
   command(SPIFLASH_MACREAD);
-  SPI.transfer(0);
-  SPI.transfer(0);
-  SPI.transfer(0);
-  SPI.transfer(0);
+  _spi->transfer(0);
+  _spi->transfer(0);
+  _spi->transfer(0);
+  _spi->transfer(0);
   for (uint8_t i=0;i<8;i++)
-    UNIQUEID[i] = SPI.transfer(0);
+    UNIQUEID[i] = _spi->transfer(0);
   unselect();
   return UNIQUEID;
 }
@@ -154,10 +119,10 @@ uint8_t* SPIFlash::readUniqueId()
 /// read 1 byte from flash memory
 uint8_t SPIFlash::readByte(uint32_t addr) {
   command(SPIFLASH_ARRAYREADLOWFREQ);
-  SPI.transfer(addr >> 16);
-  SPI.transfer(addr >> 8);
-  SPI.transfer(addr);
-  uint8_t result = SPI.transfer(0);
+  _spi->transfer(addr >> 16);
+  _spi->transfer(addr >> 8);
+  _spi->transfer(addr);
+  uint8_t result = _spi->transfer(0);
   unselect();
   return result;
 }
@@ -165,23 +130,19 @@ uint8_t SPIFlash::readByte(uint32_t addr) {
 /// read unlimited # of bytes
 void SPIFlash::readBytes(uint32_t addr, void* buf, uint16_t len) {
   command(SPIFLASH_ARRAYREAD);
-  SPI.transfer(addr >> 16);
-  SPI.transfer(addr >> 8);
-  SPI.transfer(addr);
-  SPI.transfer(0); //"dont care"
+  _spi->transfer(addr >> 16);
+  _spi->transfer(addr >> 8);
+  _spi->transfer(addr);
+  _spi->transfer(0); //"dont care"
   for (uint16_t i = 0; i < len; ++i)
-    ((uint8_t*) buf)[i] = SPI.transfer(0);
+    ((uint8_t*) buf)[i] = _spi->transfer(0);
   unselect();
 }
 
 /// Send a command to the flash chip, pass TRUE for isWrite when its a write command
-void SPIFlash::command(uint8_t cmd, boolean isWrite){
-#if defined(__AVR_ATmega32U4__) // Arduino Leonardo, MoteinoLeo
-  DDRB |= B00000001;            // Make sure the SS pin (PB0 - used by RFM12B on MoteinoLeo R1) is set as output HIGH!
-  PORTB |= B00000001;
-#endif
-  if (isWrite)
-  {
+void SPIFlash::command(uint8_t cmd, boolean isWrite) {
+
+  if (isWrite) {
     command(SPIFLASH_WRITEENABLE); // Write Enable
     unselect();
   }
@@ -195,12 +156,11 @@ void SPIFlash::command(uint8_t cmd, boolean isWrite){
   //        2) The flash chip connected is powered down, aka sleeping. 
   if (cmd != SPIFLASH_WAKE) while(busy());
   select();
-  SPI.transfer(cmd);
+  _spi->transfer(cmd);
 }
 
 /// check if the chip is busy erasing/writing
-boolean SPIFlash::busy()
-{
+boolean SPIFlash::busy() {
   /*
   select();
   SPI.transfer(SPIFLASH_STATUSREAD);
@@ -212,11 +172,10 @@ boolean SPIFlash::busy()
 }
 
 /// return the STATUS register
-uint8_t SPIFlash::readStatus()
-{
+uint8_t SPIFlash::readStatus() {
   select();
-  SPI.transfer(SPIFLASH_STATUSREAD);
-  uint8_t status = SPI.transfer(0);
+  _spi->transfer(SPIFLASH_STATUSREAD);
+  uint8_t status = _spi->transfer(0);
   unselect();
   return status;
 }
@@ -227,10 +186,10 @@ uint8_t SPIFlash::readStatus()
 ///          use the block erase commands to first clear memory (write 0xFFs)
 void SPIFlash::writeByte(uint32_t addr, uint8_t byt) {
   command(SPIFLASH_BYTEPAGEPROGRAM, true);  // Byte/Page Program
-  SPI.transfer(addr >> 16);
-  SPI.transfer(addr >> 8);
-  SPI.transfer(addr);
-  SPI.transfer(byt);
+  _spi->transfer(addr >> 16);
+  _spi->transfer(addr >> 8);
+  _spi->transfer(addr);
+  _spi->transfer(byt);
   unselect();
 }
 
@@ -247,12 +206,13 @@ void SPIFlash::writeBytes(uint32_t addr, const void* buf, uint16_t len) {
   {
     n = (len<=maxBytes) ? len : maxBytes;
     command(SPIFLASH_BYTEPAGEPROGRAM, true);  // Byte/Page Program
-    SPI.transfer(addr >> 16);
-    SPI.transfer(addr >> 8);
-    SPI.transfer(addr);
+    _spi->transfer(addr >> 16);
+    _spi->transfer(addr >> 8);
+    _spi->transfer(addr);
     
-    for (uint16_t i = 0; i < n; i++)
-      SPI.transfer(((uint8_t*) buf)[offset + i]);
+    for (uint16_t i = 0; i < n; i++) {
+      _spi->transfer(((uint8_t*) buf)[offset + i]);
+    }
     unselect();
     
     addr+=n;  // adjust the addresses and remaining bytes by what we've just transferred.
@@ -276,27 +236,27 @@ void SPIFlash::chipErase() {
 /// erase a 4Kbyte block
 void SPIFlash::blockErase4K(uint32_t addr) {
   command(SPIFLASH_BLOCKERASE_4K, true); // Block Erase
-  SPI.transfer(addr >> 16);
-  SPI.transfer(addr >> 8);
-  SPI.transfer(addr);
+  _spi->transfer(addr >> 16);
+  _spi->transfer(addr >> 8);
+  _spi->transfer(addr);
   unselect();
 }
 
 /// erase a 32Kbyte block
 void SPIFlash::blockErase32K(uint32_t addr) {
   command(SPIFLASH_BLOCKERASE_32K, true); // Block Erase
-  SPI.transfer(addr >> 16);
-  SPI.transfer(addr >> 8);
-  SPI.transfer(addr);
+  _spi->transfer(addr >> 16);
+  _spi->transfer(addr >> 8);
+  _spi->transfer(addr);
   unselect();
 }
 
 /// erase a 64Kbyte block
 void SPIFlash::blockErase64K(uint32_t addr) {
   command(SPIFLASH_BLOCKERASE_64K, true); // Block Erase
-  SPI.transfer(addr >> 16);
-  SPI.transfer(addr >> 8);
-  SPI.transfer(addr);
+  _spi->transfer(addr >> 16);
+  _spi->transfer(addr >> 8);
+  _spi->transfer(addr);
   unselect();
 }
 
@@ -347,5 +307,5 @@ void SPIFlash::wakeup() {
 
 /// cleanup
 void SPIFlash::end() {
-  SPI.end();
+  _spi->end();
 }
